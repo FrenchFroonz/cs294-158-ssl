@@ -217,7 +217,7 @@ def train_linear_classifier(task, dataset='cifar10', epochs=100, lr=0.01):
     test_loader = data.DataLoader(test_dset, batch_size=128, num_workers=4,
                                   pin_memory=True, shuffle=True)
 
-    ckpt_pth = osp.join('results', f'{dataset}_{task}', 'model_best.pth.tar')
+    ckpt_pth = osp.join('results', f'imagenet100_{task}', 'model_best.pth.tar')
     ckpt = torch.load(ckpt_pth, map_location='cpu')
 
     if task == 'context_encoder':
