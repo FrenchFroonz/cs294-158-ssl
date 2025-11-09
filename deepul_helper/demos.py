@@ -284,7 +284,7 @@ def train_linear_classifier(task, dataset='cifar10', epochs=100, lr=0.01):
     torch.save(linear_classifier.state_dict(), save_path)
     print(f'Saved new classifier to {save_path}')
     
-    return model, linear_classifier
+    return model, linear_classifier, train_loader, test_loader
 
 
 def evaluate_linear_only(model, linear_classifier, loader):
