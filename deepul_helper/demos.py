@@ -191,3 +191,117 @@ def show_segmentation():
     plt.imshow(to_show)
     plt.show()
 
+####################################################################################
+####################################################################################
+########## Train a new linear classifier on specified data and pretrained backbone
+####################################################################################
+####################################################################################
+
+
+def train_linear_classifier(task, dataset='cifar10', epochs=100, lr=0.01):
+    """
+    Train a new linear classifier on frozen pretrained features.
+    
+    Args:
+        task: 'context_encoder', 'rotation', or 'simclr'
+        dataset: 'cifar10' or other dataset name
+        epochs: Number of training epochs
+        lr: Learning rate
+    """
+    import torch.optim as optim
+    
+    # Load pretrained model and data
+    train_dset, test_dset, n_classes = get_datasets(dataset, task)
+    train_loader = data.DataLoader(train_dset, batch_size=128, num_workers=4,
+                                   pin_memory=True, shuffle=True)
+    test_loader = data.DataLoader(test_dset, batch_size=128, num_workers=4,
+                                  pin_memory=True, shuffle=True)
+
+    ckpt_pth = osp.join('results', f'{dataset}_{task}', 'model_best.pth.tar')
+    ckpt = torch.load(ckpt_pth, map_location='cpu')
+
+    if task == 'context_encoder':
+        model = ContextEncoder(dataset, n_classes)
+    elif task == 'rotation':
+        model = RotationPrediction(dataset, n_classes)
+    elif task == 'simclr':
+        model = SimCLR(dataset, n_classes, None)
+    
+    model.load_state_dict(remove_module_state_dict(ckpt['state_dict']))
+    model.cuda()
+    model.eval()
+    
+    # Freeze the backbone
+    for param in model.parameters():
+        param.requires_grad = False
+    
+    # Create a new linear classifier
+    linear_classifier = model.construct_classifier()
+    linear_classifier.cuda()
+    linear_classifier.train()
+    
+    # Optimizer for the new classifier
+    optimizer = optim.SGD(linear_classifier.parameters(), lr=lr, momentum=0.9)
+    criterion = torch.nn.CrossEntropyLoss()
+    
+    print(f"Training new linear classifier for {epochs} epochs...")
+    
+    for epoch in range(epochs):
+        train_loss = 0.0
+        correct = 0
+        total = 0
+        
+        for images, target in train_loader:
+            images = images_to_cuda(images)
+            target = target.cuda(non_blocking=True)
+            
+            # Get frozen features
+            with torch.no_grad():
+                _, zs = model(images)
+            
+            # Train classifier
+            optimizer.zero_grad()
+            logits = linear_classifier(zs)
+            loss = criterion(logits, target)
+            loss.backward()
+            optimizer.step()
+            
+            train_loss += loss.item()
+            _, predicted = logits.max(1)
+            total += target.size(0)
+            correct += predicted.eq(target).sum().item()
+        
+        train_acc = 100. * correct / total
+        
+        # Evaluate on test set
+        test_acc = evaluate_linear_only(model, linear_classifier, test_loader)
+        
+        print(f'Epoch {epoch+1}/{epochs} - Train Loss: {train_loss/len(train_loader):.3f}, '
+              f'Train Acc: {train_acc:.2f}%, Test Acc: {test_acc:.2f}%')
+    
+    # Save the new classifier
+    save_path = osp.join('results', f'{dataset}_{task}', 'new_linear_classifier.pth')
+    torch.save(linear_classifier.state_dict(), save_path)
+    print(f'Saved new classifier to {save_path}')
+    
+    return model, linear_classifier
+
+
+def evaluate_linear_only(model, linear_classifier, loader):
+    """Helper function to evaluate just the linear classifier accuracy."""
+    linear_classifier.eval()
+    correct = 0
+    total = 0
+    
+    with torch.no_grad():
+        for images, target in loader:
+            images = images_to_cuda(images)
+            target = target.cuda(non_blocking=True)
+            _, zs = model(images)
+            logits = linear_classifier(zs)
+            _, predicted = logits.max(1)
+            total += target.size(0)
+            correct += predicted.eq(target).sum().item()
+    
+    linear_classifier.train()
+    return 100. * correct / total
